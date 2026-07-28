@@ -25,12 +25,7 @@ use App\Http\Controllers\Api\OwnerUserController;
 |--------------------------------------------------------------------------
 */
 
-Route::get('/health', function () {
-    return response()->json([
-        'status' => 'ok',
-        'timestamp' => now()->toIso8601String(),
-    ]);
-});
+Route::get('/health', [\App\Http\Controllers\Api\HealthController::class, 'index']);
 
 Route::post('/login', [AuthController::class, 'login']);
 Route::middleware('auth:sanctum')->group(function () {
