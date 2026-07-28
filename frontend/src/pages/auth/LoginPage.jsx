@@ -67,10 +67,11 @@ function LoginPage() {
     };
 
     localStorage.setItem("nikky_user", JSON.stringify(loginSession));
-    localStorage.setItem(
-      "nikky_login_activity_id",
-      String(loginActivityId)
-    );
+    localStorage.setItem("nikky_login_activity_id", String(loginActivityId));
+
+    if (loginData.token) {
+      localStorage.setItem("nikky_token", loginData.token);
+    }
   };
 
   const handleSubmit = async (event) => {
@@ -122,7 +123,7 @@ function LoginPage() {
         alt="Background Nikky Frozen"
         className="absolute inset-0 h-full w-full object-cover object-center"
       />
-      
+
       {/* Dark Blur Overlay */}
       <div className="absolute inset-0 bg-[#1B120E]/60 backdrop-blur-sm" />
 

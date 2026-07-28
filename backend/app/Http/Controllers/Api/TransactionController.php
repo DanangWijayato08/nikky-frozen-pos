@@ -7,11 +7,14 @@ use App\Models\Product;
 use App\Models\StockHistory;
 use App\Models\Transaction;
 use App\Models\Shift;
+use App\Traits\ChecksBranchIsolation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class TransactionController extends Controller
 {
+    use ChecksBranchIsolation;
+
     public function index(Request $request)
     {
         $query = Transaction::with([
@@ -19,11 +22,15 @@ class TransactionController extends Controller
             'items',
         ])->orderBy('id', 'desc');
 
-        if ($request->filled('branch_id')) {
-            $query->where('branch_id', $request->branch_id);
+        $filteredBranchId = $this->getFilteredBranchId($request);
+        if ($filteredBranchId) {
+            $query->where('branch_id', $filteredBranchId);
         }
 
-        if ($request->filled('username')) {
+        $user = $request->user();
+        if ($user && $user->role === 'cashier') {
+            $query->where('username', $user->username);
+        } elseif ($request->filled('username')) {
             $query->where('username', $request->username);
         }
 
@@ -71,90 +78,151 @@ class TransactionController extends Controller
     public function checkout(Request $request)
     {
         $validatedData = $request->validate([
-            'branch_id' => ['required', 'exists:branches,id'],
-            'cashier_name' => ['required', 'string', 'max:255'],
-            'username' => ['required', 'string', 'max:100'],
-            'shift_name' => ['nullable', 'string', 'max:100'],
+            'apply_tax' => ['nullable', 'boolean'],
             'discount' => ['nullable', 'integer', 'min:0'],
-            'tax_rate' => ['nullable', 'integer', 'min:0'],
             'payment_method' => ['required', 'string', 'max:50'],
             'paid_amount' => ['required', 'integer', 'min:0'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'exists:products,id'],
-            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items.*.quantity' => ['required', 'numeric', 'integer', 'min:1'],
         ]);
 
+        $user = $request->user();
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.',
+            ], 401);
+        }
+
+        $branchId = $user->branch_id;
+        $username = $user->username;
+        $cashierName = $user->name;
+
+        // Ensure owner provides branch_id if they checkout, or just use their branch_id.
+        if ($user->role === 'owner' && $request->filled('branch_id')) {
+            $branchId = $request->branch_id;
+        }
+
+        // Fetch settings for Tax and Discount
+        $receiptSetting = \App\Models\Setting::where('key', 'receipt_setting')->first()?->value ?? [];
+        $isPpnActive = $receiptSetting['ppnActive'] ?? false;
+        $ppnRate = $receiptSetting['ppnRate'] ?? 0;
+        // Default max discount percentage is 0 if not set, but let's allow up to 100% if not configured, to be safe.
+        // Actually, let's use the default from SettingController: 10%
+        $maxDiscountPercent = $receiptSetting['maxDiscount'] ?? 10;
+
         try {
-            $activeShift = Shift::where('username', $validatedData['username'])
-                ->where('branch_id', $validatedData['branch_id'])
+            $activeShift = Shift::where('username', $username)
+                ->where('branch_id', $branchId)
                 ->where('status', 'Berjalan')
                 ->latest('id')
                 ->first();
 
             if (!$activeShift) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Anda belum membuka shift. Silakan buka shift terlebih dahulu sebelum melakukan transaksi.',
-                ], 422);
+                // Business logic error: 422
+                throw new \Exception('Anda belum membuka shift. Silakan buka shift terlebih dahulu sebelum melakukan transaksi.', 422);
             }
 
-            $transaction = DB::transaction(function () use ($validatedData) {
+            // Combine duplicate product_ids by summing their quantities
+            $combinedItems = [];
+            foreach ($validatedData['items'] as $item) {
+                $pid = $item['product_id'];
+                if (isset($combinedItems[$pid])) {
+                    $combinedItems[$pid]['quantity'] += (int) $item['quantity'];
+                } else {
+                    $combinedItems[$pid] = [
+                        'product_id' => $pid,
+                        'quantity' => (int) $item['quantity']
+                    ];
+                }
+            }
+
+            $transaction = DB::transaction(function () use ($validatedData, $user, $branchId, $username, $cashierName, $activeShift, $combinedItems, $isPpnActive, $ppnRate, $maxDiscountPercent) {
                 $subtotal = 0;
                 $totalItem = 0;
                 $itemsPayload = [];
 
-                foreach ($validatedData['items'] as $item) {
-                    $product = Product::where('id', $item['product_id'])
-                        ->where('branch_id', $validatedData['branch_id'])
+                // Sort product IDs to prevent deadlocks when locking multiple rows
+                $productIds = array_keys($combinedItems);
+                sort($productIds);
+
+                foreach ($productIds as $pid) {
+                    $item = $combinedItems[$pid];
+                    $quantity = $item['quantity'];
+
+                    $product = Product::where('id', $pid)
+                        ->where('branch_id', $branchId)
                         ->lockForUpdate()
                         ->first();
 
                     if (!$product) {
-                        throw new \Exception('Produk tidak ditemukan pada cabang ini.');
+                        // Resource not found in scope: 404
+                        throw new \Exception("Produk dengan ID {$pid} tidak ditemukan pada cabang ini.", 404);
                     }
 
-                    if ($product->stock < $item['quantity']) {
-                        throw new \Exception("Stok produk '{$product->name}' tidak cukup.");
+                    if ($product->status && strtolower($product->status) !== 'aktif' && strtolower($product->status) !== 'active') {
+                        // Conflict/Business rule: 422 or 409
+                        throw new \Exception("Produk '{$product->name}' tidak aktif.", 422);
                     }
 
-                    $itemSubtotal = $product->price * $item['quantity'];
+                    if ($product->stock < $quantity) {
+                        // Conflict: 409
+                        throw new \Exception("Stok produk '{$product->name}' tidak cukup. Tersedia: {$product->stock}, Diminta: {$quantity}", 409);
+                    }
+
+                    $itemSubtotal = (int) $product->price * $quantity;
 
                     $subtotal += $itemSubtotal;
-                    $totalItem += $item['quantity'];
+                    $totalItem += $quantity;
 
                     $itemsPayload[] = [
                         'product' => $product,
-                        'quantity' => $item['quantity'],
+                        'quantity' => $quantity,
                         'subtotal' => $itemSubtotal,
                     ];
                 }
 
-                $discount = $validatedData['discount'] ?? 0;
+                $discount = (int) ($validatedData['discount'] ?? 0);
 
-                if ($discount > $subtotal) {
-                    throw new \Exception('Diskon tidak boleh lebih besar dari subtotal.');
+                if ($discount < 0) {
+                    throw new \Exception('Diskon tidak boleh negatif.', 422);
                 }
 
-                $taxRate = $validatedData['tax_rate'] ?? 11;
+                if ($discount > $subtotal) {
+                    throw new \Exception('Diskon tidak boleh lebih besar dari subtotal.', 422);
+                }
+
+                // Check max discount limit
+                // Roles like 'owner' might bypass this, but for now we enforce it for everyone or just cashier
+                if ($user->role !== 'owner' && $user->role !== 'admin') {
+                    $maxAllowedDiscountNominal = (int) round($subtotal * ($maxDiscountPercent / 100));
+                    if ($discount > $maxAllowedDiscountNominal) {
+                        throw new \Exception("Diskon melebihi batas maksimal yang diizinkan ({$maxDiscountPercent}%). Maksimal nominal diskon: {$maxAllowedDiscountNominal}", 422);
+                    }
+                }
+
+                $applyTax = $validatedData['apply_tax'] ?? true; // Apply by default if frontend doesn't send flag, but we follow settings
+                $taxRate = ($applyTax && $isPpnActive) ? $ppnRate : 0;
+
                 $taxableAmount = $subtotal - $discount;
-                $tax = round($taxableAmount * ($taxRate / 100));
+                $tax = (int) round($taxableAmount * ($taxRate / 100));
                 $grandTotal = $taxableAmount + $tax;
 
-                if (
-                    $validatedData['payment_method'] === 'Tunai' &&
-                    $validatedData['paid_amount'] < $grandTotal
-                ) {
-                    throw new \Exception('Nominal pembayaran belum mencukupi.');
+                $paidAmount = (int) $validatedData['paid_amount'];
+
+                if ($paidAmount < $grandTotal) {
+                    throw new \Exception('Nominal pembayaran belum mencukupi.', 422);
                 }
 
                 $invoiceNumber = $this->generateInvoiceNumber();
 
                 $transaction = Transaction::create([
-                    'branch_id' => $validatedData['branch_id'],
+                    'branch_id' => $branchId,
                     'invoice_number' => $invoiceNumber,
-                    'cashier_name' => $validatedData['cashier_name'],
-                    'username' => $validatedData['username'],
-                    'shift_name' => $validatedData['shift_name'] ?? '-',
+                    'cashier_name' => $cashierName,
+                    'username' => $username,
+                    'shift_name' => $activeShift->shift_name ?? '-',
                     'total_item' => $totalItem,
                     'subtotal' => $subtotal,
                     'discount' => $discount,
@@ -162,10 +230,8 @@ class TransactionController extends Controller
                     'tax_rate' => $taxRate,
                     'grand_total' => $grandTotal,
                     'payment_method' => $validatedData['payment_method'],
-                    'paid_amount' => $validatedData['paid_amount'],
-                    'change_amount' => $validatedData['payment_method'] === 'Tunai'
-                        ? $validatedData['paid_amount'] - $grandTotal
-                        : 0,
+                    'paid_amount' => $paidAmount,
+                    'change_amount' => $paidAmount - $grandTotal,
                     'status' => 'Berhasil',
                     'transaction_date' => now(),
                 ]);
@@ -184,15 +250,16 @@ class TransactionController extends Controller
                         'subtotal' => $itemPayload['subtotal'],
                     ]);
 
+                    $beforeStock = $product->stock;
                     $product->decrement('stock', $quantity);
 
                     StockHistory::create([
                         'product_id' => $product->id,
                         'branch_id' => $product->branch_id,
-                        'user_id' => null,
+                        'user_id' => $user->id,
                         'type' => 'sale',
                         'quantity' => $quantity,
-                        'before_store_stock' => $product->stock + $quantity,
+                        'before_store_stock' => $beforeStock,
                         'after_store_stock' => $product->stock,
                         'before_warehouse_stock' => $product->warehouse_stock,
                         'after_warehouse_stock' => $product->warehouse_stock,
@@ -212,10 +279,24 @@ class TransactionController extends Controller
                 'data' => $transaction,
             ], 201);
         } catch (\Exception $error) {
+            $statusCode = $error->getCode();
+            if ($statusCode < 100 || $statusCode > 599) {
+                $statusCode = 500;
+            }
+
+            $message = $error->getMessage();
+            if ($statusCode === 500 && !config('app.debug')) {
+                $message = 'Terjadi kesalahan internal pada server saat memproses transaksi.';
+                // Log the actual error safely
+                \Illuminate\Support\Facades\Log::error('Checkout Error: ' . $error->getMessage(), [
+                    'trace' => $error->getTraceAsString()
+                ]);
+            }
+
             return response()->json([
                 'success' => false,
-                'message' => $error->getMessage(),
-            ], 422);
+                'message' => $message,
+            ], $statusCode);
         }
     }
 

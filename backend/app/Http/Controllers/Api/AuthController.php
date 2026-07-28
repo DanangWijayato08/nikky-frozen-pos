@@ -55,10 +55,13 @@ class AuthController extends Controller
             'note' => 'Login Berhasil',
         ]);
 
+        $token = $user->createToken('auth_token')->plainTextToken;
+
         return response()->json([
             'success' => true,
             'message' => 'Login berhasil.',
             'data' => [
+                'token' => $token,
                 'user' => [
                     'id' => $user->id,
                     'name' => $user->name,
@@ -80,12 +83,13 @@ class AuthController extends Controller
 
     public function logout(Request $request)
     {
+        $user = $request->user();
+
         $validatedData = $request->validate([
-            'username' => ['required', 'string'],
             'login_activity_id' => ['nullable', 'integer'],
         ]);
 
-        $query = LoginActivity::where('username', $validatedData['username'])
+        $query = LoginActivity::where('user_id', $user->id)
             ->where('status', 'Login');
 
         if (!empty($validatedData['login_activity_id'])) {
@@ -101,6 +105,8 @@ class AuthController extends Controller
                 'note' => 'Logout Berhasil',
             ]);
         }
+
+        $user->currentAccessToken()->delete();
 
         return response()->json([
             'success' => true,

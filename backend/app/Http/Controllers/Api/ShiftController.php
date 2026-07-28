@@ -5,21 +5,28 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Shift;
 use App\Models\Transaction;
+use App\Traits\ChecksBranchIsolation;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
 class ShiftController extends Controller
 {
+    use ChecksBranchIsolation;
+
     public function index(Request $request)
     {
         $query = Shift::with('branch:id,name,code')
             ->orderBy('id', 'desc');
 
-        if ($request->filled('branch_id')) {
-            $query->where('branch_id', $request->branch_id);
+        $filteredBranchId = $this->getFilteredBranchId($request);
+        if ($filteredBranchId) {
+            $query->where('branch_id', $filteredBranchId);
         }
 
-        if ($request->filled('username')) {
+        $user = $request->user();
+        if ($user && $user->role === 'cashier') {
+            $query->where('username', $user->username);
+        } elseif ($request->filled('username')) {
             $query->where('username', $request->username);
         }
 
@@ -47,13 +54,17 @@ class ShiftController extends Controller
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
         ]);
 
+        $user = $request->user();
+        $username = ($user && $user->role === 'cashier') ? $user->username : $request->username;
+
         $query = Shift::with('branch:id,name,code')
-            ->where('username', $request->username)
+            ->where('username', $username)
             ->where('status', 'Berjalan')
             ->whereNull('closed_at');
 
-        if ($request->filled('branch_id')) {
-            $query->where('branch_id', $request->branch_id);
+        $branchId = $this->getFilteredBranchId($request);
+        if ($branchId) {
+            $query->where('branch_id', $branchId);
         }
 
         $shift = $query->latest('id')->first();
@@ -73,11 +84,19 @@ class ShiftController extends Controller
             'username' => ['required', 'string'],
         ]);
 
-        $shift = Shift::with('branch:id,name,code')
-            ->where('username', $request->username)
-            ->where('status', 'Berjalan')
-            ->latest('id')
-            ->first();
+        $user = $request->user();
+        $username = ($user && $user->role === 'cashier') ? $user->username : $request->username;
+
+        $query = Shift::with('branch:id,name,code')
+            ->where('username', $username)
+            ->where('status', 'Berjalan');
+
+        $branchId = $this->getFilteredBranchId($request);
+        if ($branchId) {
+            $query->where('branch_id', $branchId);
+        }
+
+        $shift = $query->latest('id')->first();
 
         return response()->json([
             'success' => true,
@@ -98,6 +117,13 @@ class ShiftController extends Controller
             'opening_cash' => ['required', 'integer', 'min:0'],
             'note' => ['nullable', 'string'],
         ]);
+
+        $user = $request->user();
+        if ($user && $user->role !== 'owner') {
+            $validatedData['branch_id'] = $user->branch_id;
+            $validatedData['cashier_name'] = $user->name;
+            $validatedData['username'] = $user->username;
+        }
 
         $runningShift = Shift::where('username', $validatedData['username'])
             ->where('status', 'Berjalan')
@@ -128,14 +154,28 @@ class ShiftController extends Controller
         ], 201);
     }
 
+    private function canModifyShift(Request $request, Shift $shift)
+    {
+        if (!$this->authorizeBranchAccess($request, $shift->branch_id)) {
+            return false;
+        }
+
+        $user = $request->user();
+        if ($user && $user->role === 'cashier' && $shift->username !== $user->username) {
+            return false;
+        }
+
+        return true;
+    }
+
     public function close(Request $request, $id)
     {
         $shift = Shift::find($id);
 
-        if (!$shift) {
+        if (!$shift || !$this->canModifyShift($request, $shift)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Data shift tidak ditemukan.',
+                'message' => 'Data shift tidak ditemukan atau Anda tidak berhak mengaksesnya.',
             ], 404);
         }
 
@@ -186,14 +226,14 @@ class ShiftController extends Controller
         ]);
     }
 
-    public function show($id)
+    public function show(Request $request, $id)
     {
         $shift = Shift::with('branch:id,name,code')->find($id);
 
-        if (!$shift) {
+        if (!$shift || !$this->canModifyShift($request, $shift)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Data shift tidak ditemukan.',
+                'message' => 'Data shift tidak ditemukan atau Anda tidak berhak mengaksesnya.',
             ], 404);
         }
 
@@ -208,10 +248,10 @@ class ShiftController extends Controller
     {
         $shift = Shift::find($id);
 
-        if (!$shift) {
+        if (!$shift || !$this->canModifyShift($request, $shift)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Data shift tidak ditemukan.',
+                'message' => 'Data shift tidak ditemukan atau Anda tidak berhak mengubahnya.',
             ], 404);
         }
 
@@ -226,6 +266,13 @@ class ShiftController extends Controller
             'status' => ['required', Rule::in(['Berjalan', 'Selesai'])],
         ]);
 
+        $user = $request->user();
+        if ($user && $user->role !== 'owner') {
+            $validatedData['branch_id'] = $user->branch_id;
+            $validatedData['cashier_name'] = $shift->cashier_name;
+            $validatedData['username'] = $shift->username;
+        }
+
         $shift->update($validatedData);
 
         return response()->json([
@@ -235,14 +282,14 @@ class ShiftController extends Controller
         ]);
     }
 
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
         $shift = Shift::find($id);
 
-        if (!$shift) {
+        if (!$shift || !$this->canModifyShift($request, $shift)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Data shift tidak ditemukan.',
+                'message' => 'Data shift tidak ditemukan atau Anda tidak berhak menghapusnya.',
             ], 404);
         }
 

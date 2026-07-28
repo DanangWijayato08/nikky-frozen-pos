@@ -5,19 +5,22 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Product;
 use App\Models\StockHistory;
+use App\Traits\ChecksBranchIsolation;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 
 class AdminDashboardController extends Controller
 {
+    use ChecksBranchIsolation;
+
     public function index(Request $request)
     {
         $validated = $request->validate([
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
         ]);
 
-        $branchId = $validated['branch_id'] ?? null;
+        $branchId = $this->getFilteredBranchId($request);
         $today = Carbon::today();
         $soonUntil = Carbon::today()->addDays(30);
 

@@ -112,6 +112,7 @@ function Sidebar({ isOpen = false, onClose = () => {} }) {
 
   const clearLoginSession = () => {
     localStorage.removeItem("nikky_user");
+    localStorage.removeItem("nikky_token");
     localStorage.removeItem("nikky_login_activity_id");
   };
 
@@ -141,12 +142,11 @@ function Sidebar({ isOpen = false, onClose = () => {} }) {
         }
       }
 
-      if (userData?.username && typeof api.logoutUser === "function") {
+      if (typeof api.logoutUser === "function") {
         await api.logoutUser({
-          username: userData.username,
           login_activity_id: savedLoginActivityId
             ? Number(savedLoginActivityId)
-            : userData.loginActivityId || null,
+            : userData?.loginActivityId || null,
         });
       }
     } catch (error) {

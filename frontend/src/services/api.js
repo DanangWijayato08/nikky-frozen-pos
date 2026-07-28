@@ -5,116 +5,90 @@ const API_BASE_URL =
 
 
 async function handleResponse(response, defaultErrorMessage) {
-
   let result;
-
   try {
     result = await response.json();
   } catch {
     result = null;
   }
 
+  if (response.status === 401) {
+    localStorage.removeItem("nikky_user");
+    localStorage.removeItem("nikky_token");
+    localStorage.removeItem("nikky_login_activity_id");
+    if (window.location.pathname !== "/login") {
+      window.location.href = "/login";
+    }
+    throw new Error("Sesi telah habis. Silakan login kembali.");
+  }
 
+  if (response.status === 403) {
+    throw new Error(result?.message || "Anda tidak memiliki akses ke resource ini.");
+  }
+
+  if (response.status === 404) {
+    throw new Error(result?.message || "Data tidak ditemukan.");
+  }
+
+  if (response.status === 409) {
+    throw new Error(result?.message || "Terjadi konflik data (misal: stok tidak cukup).");
+  }
+
+  if (response.status === 422) {
+    if (result?.errors) {
+      // Return all validation errors if needed, but for simple string we pick first
+      const firstError = Object.values(result.errors)[0]?.[0];
+      throw new Error(firstError || result?.message || "Data yang dikirim tidak valid.");
+    }
+    throw new Error(result?.message || "Data yang dikirim tidak valid.");
+  }
+
+  if (response.status >= 500) {
+    throw new Error(result?.message || "Terjadi kesalahan internal pada server.");
+  }
 
   if (!response.ok) {
-
-    if (result?.errors) {
-
-      const firstError = Object.values(result.errors)[0]?.[0];
-
-
-
-      throw new Error(firstError || result.message || defaultErrorMessage);
-
-    }
-
-
-
     throw new Error(result?.message || defaultErrorMessage);
-
   }
-
-
 
   return result;
-
 }
-
-
 
 function buildQueryParams(params = {}) {
-
   const queryParams = new URLSearchParams();
-
-
-
   Object.entries(params).forEach(([key, value]) => {
-
     if (value !== undefined && value !== null && value !== "" && value !== "all") {
-
       queryParams.append(key, value);
-
     }
-
   });
-
-
-
   return queryParams.toString();
-
 }
 
-
-
-async function request(
-
-  url,
-
-  options = {},
-
-  defaultErrorMessage = "Terjadi kesalahan."
-
-) {
-
+async function request(url, options = {}, defaultErrorMessage = "Terjadi kesalahan.") {
   try {
-
     const isFormData = options.body instanceof FormData;
+    const token = localStorage.getItem("nikky_token");
 
     const headers = {
-
       Accept: "application/json",
-
       ...(!isFormData && options.body ? { "Content-Type": "application/json" } : {}),
-
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
-
     };
 
-
-
     const response = await fetch(url, {
-
       ...options,
-
       headers,
-
     });
 
-
-
-    return handleResponse(response, defaultErrorMessage);
-
+    return await handleResponse(response, defaultErrorMessage);
   } catch (err) {
-
-    throw new Error(
-
-      "Tidak bisa terhubung ke backend. Pastikan Laravel berjalan di http://127.0.0.1:8000",
-      { cause: err }
-
-    );
-
+    // If it's a network error (TypeError: Failed to fetch), err.message might not be from our HTTP statuses
+    if (err.name === "TypeError" || err.message === "Failed to fetch") {
+      throw new Error("Tidak bisa terhubung ke backend. Pastikan server API berjalan.", { cause: err });
+    }
+    throw err;
   }
-
 }
 
 
@@ -160,31 +134,23 @@ async function cachedRequest(url, options = {}, defaultErrorMessage = "Terjadi k
 
 
 async function requestBlob(url, options = {}, defaultErrorMessage = "Terjadi kesalahan.") {
-
   try {
-
     const isFormData = options.body instanceof FormData;
+    const token = localStorage.getItem("nikky_token");
 
     const headers = {
-
       Accept: "text/csv",
-
       ...(!isFormData && options.body ? { "Content-Type": "application/json" } : {}),
-
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
-
     };
 
     const response = await fetch(url, { ...options, headers });
 
     if (!response.ok) {
-
       let result = null;
-
       try { result = await response.json(); } catch { result = null; }
-
       throw new Error(result?.message || defaultErrorMessage);
-
     }
 
     const blob = await response.blob();
@@ -989,7 +955,17 @@ export async function deleteShift(id) {
 
 ========================= */
 
+export async function getMe() {
+  const result = await request(
+    `${API_BASE_URL}/me`,
+    {
+      method: "GET",
+    },
+    "Gagal mengambil sesi."
+  );
 
+  return result.data;
+}
 
 export async function loginUser(loginData) {
 
@@ -1482,21 +1458,14 @@ const api = {
   deleteExpense,
 
   getShifts,
-
   getCurrentShift,
-
   getActiveShift,
-
   openShift,
-
   closeShift,
-
   updateShift,
-
   deleteShift,
-
+  getMe,
   loginUser,
-
   logoutUser,
 
   getLoginActivities,

@@ -4,10 +4,13 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\StockHistory;
+use App\Traits\ChecksBranchIsolation;
 use Illuminate\Http\Request;
 
 class StockHistoryController extends Controller
 {
+    use ChecksBranchIsolation;
+
     public function index(Request $request)
     {
         $query = StockHistory::with(['product:id,name,code,category', 'user:id,name,username'])
@@ -29,8 +32,9 @@ class StockHistoryController extends Controller
             return $typeMappings[$value] ?? [$value];
         };
 
-        if ($request->filled('branch_id')) {
-            $query->where('branch_id', $request->branch_id);
+        $filteredBranchId = $this->getFilteredBranchId($request);
+        if ($filteredBranchId) {
+            $query->where('branch_id', $filteredBranchId);
         }
 
         if ($request->filled('type')) {

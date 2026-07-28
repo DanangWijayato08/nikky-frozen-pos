@@ -653,14 +653,9 @@ function KasirPage() {
       setIsSubmitting(true);
       
       const payload = {
-        branch_id: currentUser.branch_id,
-        cashier_name: currentUser.name || currentUser.username,
-        username: currentUser.username,
-        shift_name: currentUser.shift || "-",
-        discount: 0,
-        tax_rate: 0,
         payment_method: paymentMethod,
         paid_amount: paymentMethod === "Tunai" ? Number(cashReceived) : subtotal,
+        apply_tax: true,
         items: cart.map(item => ({
           product_id: item.id,
           quantity: item.quantity

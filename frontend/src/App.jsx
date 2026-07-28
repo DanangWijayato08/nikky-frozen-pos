@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 import MainLayout from "./layouts/MainLayout";
@@ -19,6 +20,8 @@ import AdminDashboard from "./pages/admin/AdminDashboard";
 import AdminProdukPage from "./pages/admin/AdminProdukPage";
 import AdminMutasiPage from "./pages/admin/AdminMutasiPage";
 import AdminRiwayatStok from "./pages/admin/AdminRiwayatStok";
+
+import { getMe } from "./services/api";
 
 function normalizeRole(role) {
   const normalized = String(role || "").toLowerCase();
@@ -133,149 +136,199 @@ function RoleRedirect() {
   return <KasirPage />;
 }
 
-function App() {
+function AppContent() {
+  const [isChecking, setIsChecking] = useState(true);
+
+  useEffect(() => {
+    const verifySession = async () => {
+      const token = localStorage.getItem("nikky_token");
+      if (!token) {
+        setIsChecking(false);
+        return;
+      }
+
+      try {
+        const user = await getMe();
+        // Update user data seamlessly
+        const oldUser = getCurrentUser() || {};
+        const loginSession = {
+          ...oldUser,
+          id: user.id,
+          name: user.name,
+          username: user.username,
+          email: user.email,
+          role: normalizeRole(user.role),
+          branch_id: user.branch_id,
+          branch: normalizeRole(user.role) === "owner" ? "Semua Cabang" : user.branch?.name,
+          branch_code: user.branch?.code,
+          shift: user.shift_name,
+          phone: user.phone,
+          status: user.status,
+        };
+        localStorage.setItem("nikky_user", JSON.stringify(loginSession));
+      } catch (error) {
+        // If 401, handleResponse in api.js already clears local storage and redirects.
+        console.error("Session verification failed", error);
+      } finally {
+        setIsChecking(false);
+      }
+    };
+
+    verifySession();
+  }, []);
+
+  if (isChecking) {
+    return <div className="flex h-screen items-center justify-center font-bold text-[#C80503]">Loading...</div>;
+  }
+
   return (
-    <BrowserRouter>
-      <Routes>
+    <Routes>
+      <Route
+        path="/login"
+        element={
+          <GuestRoute>
+            <LoginPage />
+          </GuestRoute>
+        }
+      />
+
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <MainLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<RoleRedirect />} />
+
         <Route
-          path="/login"
+          path="owner/dashboard"
           element={
-            <GuestRoute>
-              <LoginPage />
-            </GuestRoute>
+            <OwnerOnlyRoute>
+              <OwnerDashboard />
+            </OwnerOnlyRoute>
           }
         />
 
         <Route
-          path="/"
+          path="owner/data-kasir"
           element={
-            <ProtectedRoute>
-              <MainLayout />
-            </ProtectedRoute>
+            <OwnerOnlyRoute>
+              <DataKasirPage />
+            </OwnerOnlyRoute>
           }
-        >
-          <Route index element={<RoleRedirect />} />
+        />
 
-          <Route
-            path="owner/dashboard"
-            element={
-              <OwnerOnlyRoute>
-                <OwnerDashboard />
-              </OwnerOnlyRoute>
-            }
-          />
+        <Route
+          path="owner/aktivitas-login"
+          element={
+            <OwnerOnlyRoute>
+              <AktivitasLoginPage />
+            </OwnerOnlyRoute>
+          }
+        />
 
-          <Route
-            path="owner/data-kasir"
-            element={
-              <OwnerOnlyRoute>
-                <DataKasirPage />
-              </OwnerOnlyRoute>
-            }
-          />
+        <Route
+          path="admin/dashboard"
+          element={
+            <AdminOnlyRoute>
+              <AdminDashboard />
+            </AdminOnlyRoute>
+          }
+        />
 
-          <Route
-            path="owner/aktivitas-login"
-            element={
-              <OwnerOnlyRoute>
-                <AktivitasLoginPage />
-              </OwnerOnlyRoute>
-            }
-          />
+        <Route
+          path="admin/produk"
+          element={
+            <AdminOnlyRoute>
+              <AdminProdukPage />
+            </AdminOnlyRoute>
+          }
+        />
 
-          <Route
-            path="admin/dashboard"
-            element={
-              <AdminOnlyRoute>
-                <AdminDashboard />
-              </AdminOnlyRoute>
-            }
-          />
+        <Route
+          path="admin/mutasi"
+          element={
+            <AdminOnlyRoute>
+              <AdminMutasiPage />
+            </AdminOnlyRoute>
+          }
+        />
 
-          <Route
-            path="admin/produk"
-            element={
-              <AdminOnlyRoute>
-                <AdminProdukPage />
-              </AdminOnlyRoute>
-            }
-          />
+        <Route
+          path="admin/riwayat"
+          element={
+            <AdminOnlyRoute>
+              <AdminRiwayatStok />
+            </AdminOnlyRoute>
+          }
+        />
 
-          <Route
-            path="admin/mutasi"
-            element={
-              <AdminOnlyRoute>
-                <AdminMutasiPage />
-              </AdminOnlyRoute>
-            }
-          />
+        <Route
+          path="shift"
+          element={
+            <KasirOnlyRoute>
+              <ShiftPage />
+            </KasirOnlyRoute>
+          }
+        />
 
-          <Route
-            path="admin/riwayat"
-            element={
-              <AdminOnlyRoute>
-                <AdminRiwayatStok />
-              </AdminOnlyRoute>
-            }
-          />
+        <Route
+          path="barang"
+          element={
+            <OwnerOnlyRoute>
+              <BarangPage />
+            </OwnerOnlyRoute>
+          }
+        />
 
-          <Route
-            path="shift"
-            element={
-              <KasirOnlyRoute>
-                <ShiftPage />
-              </KasirOnlyRoute>
-            }
-          />
+        <Route
+          path="transaksi"
+          element={
+            <KasirOnlyRoute>
+              <TransaksiPage />
+            </KasirOnlyRoute>
+          }
+        />
 
-          <Route
-            path="barang"
-            element={
-              <OwnerOnlyRoute>
-                <BarangPage />
-              </OwnerOnlyRoute>
-            }
-          />
+        <Route
+          path="laporan"
+          element={
+            <OwnerOnlyRoute>
+              <LaporanPage />
+            </OwnerOnlyRoute>
+          }
+        />
 
-          <Route
-            path="transaksi"
-            element={
-              <KasirOnlyRoute>
-                <TransaksiPage />
-              </KasirOnlyRoute>
-            }
-          />
+        <Route
+          path="pengeluaran"
+          element={
+            <OwnerOnlyRoute>
+              <PengeluaranPage />
+            </OwnerOnlyRoute>
+          }
+        />
 
-          <Route
-            path="laporan"
-            element={
-              <OwnerOnlyRoute>
-                <LaporanPage />
-              </OwnerOnlyRoute>
-            }
-          />
+        <Route
+          path="pengaturan"
+          element={
+            <OwnerOnlyRoute>
+              <PengaturanPage />
+            </OwnerOnlyRoute>
+          }
+        />
+      </Route>
 
-          <Route
-            path="pengeluaran"
-            element={
-              <OwnerOnlyRoute>
-                <PengeluaranPage />
-              </OwnerOnlyRoute>
-            }
-          />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
 
-          <Route
-            path="pengaturan"
-            element={
-              <OwnerOnlyRoute>
-                <PengaturanPage />
-              </OwnerOnlyRoute>
-            }
-          />
-        </Route>
-
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+function App() {
+  return (
+    <BrowserRouter>
+      <AppContent />
     </BrowserRouter>
   );
 }

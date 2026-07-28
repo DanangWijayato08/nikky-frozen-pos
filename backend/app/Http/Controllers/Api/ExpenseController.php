@@ -4,19 +4,23 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Expense;
+use App\Traits\ChecksBranchIsolation;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
 class ExpenseController extends Controller
 {
+    use ChecksBranchIsolation;
+
     public function index(Request $request)
     {
         $query = Expense::with('branch:id,name,code')
             ->orderBy('expense_date', 'desc')
             ->orderBy('id', 'desc');
 
-        if ($request->filled('branch_id')) {
-            $query->where('branch_id', $request->branch_id);
+        $filteredBranchId = $this->getFilteredBranchId($request);
+        if ($filteredBranchId) {
+            $query->where('branch_id', $filteredBranchId);
         }
 
         if ($request->filled('category')) {
@@ -56,11 +60,11 @@ class ExpenseController extends Controller
         ]);
     }
 
-    public function show($id)
+    public function show(Request $request, $id)
     {
         $expense = Expense::with('branch:id,name,code')->find($id);
 
-        if (!$expense) {
+        if (!$expense || !$this->authorizeBranchAccess($request, $expense->branch_id)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Data pengeluaran tidak ditemukan.',
@@ -87,6 +91,13 @@ class ExpenseController extends Controller
             'status' => ['nullable', Rule::in(['Aktif', 'Dibatalkan'])],
         ]);
 
+        $user = $request->user();
+        if ($user && $user->role !== 'owner') {
+            $validatedData['branch_id'] = $user->branch_id;
+            $validatedData['user_name'] = $user->name;
+            $validatedData['username'] = $user->username;
+        }
+
         $validatedData['status'] = $validatedData['status'] ?? 'Aktif';
 
         $expense = Expense::create($validatedData);
@@ -102,7 +113,7 @@ class ExpenseController extends Controller
     {
         $expense = Expense::find($id);
 
-        if (!$expense) {
+        if (!$expense || !$this->authorizeBranchAccess($request, $expense->branch_id)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Data pengeluaran tidak ditemukan.',
@@ -120,6 +131,13 @@ class ExpenseController extends Controller
             'status' => ['nullable', Rule::in(['Aktif', 'Dibatalkan'])],
         ]);
 
+        $user = $request->user();
+        if ($user && $user->role !== 'owner') {
+            $validatedData['branch_id'] = $user->branch_id;
+            $validatedData['user_name'] = $user->name;
+            $validatedData['username'] = $user->username;
+        }
+
         $validatedData['status'] = $validatedData['status'] ?? 'Aktif';
 
         $expense->update($validatedData);
@@ -131,11 +149,11 @@ class ExpenseController extends Controller
         ]);
     }
 
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
         $expense = Expense::find($id);
 
-        if (!$expense) {
+        if (!$expense || !$this->authorizeBranchAccess($request, $expense->branch_id)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Data pengeluaran tidak ditemukan.',
