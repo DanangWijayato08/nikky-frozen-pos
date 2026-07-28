@@ -1,0 +1,15 @@
+.git
+.idea
+.vscode
+node_modules
+vendor
+.env
+.env.*
+database/database.sqlite
+storage/*.key
+storage/logs/*
+!storage/logs/.gitignore
+bootstrap/cache/*
+!bootstrap/cache/.gitignore
+phpunit.xml
+tests
