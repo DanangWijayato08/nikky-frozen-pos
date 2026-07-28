@@ -35,7 +35,9 @@ class TransactionController extends Controller
         }
 
         if ($request->filled('date')) {
-            $query->whereDate('transaction_date', $request->date);
+            $startOfDay = \Illuminate\Support\Carbon::parse($request->date, 'Asia/Jakarta')->startOfDay()->timezone('UTC');
+            $endOfDay = \Illuminate\Support\Carbon::parse($request->date, 'Asia/Jakarta')->endOfDay()->timezone('UTC');
+            $query->whereBetween('transaction_date', [$startOfDay, $endOfDay]);
         }
 
         if ($request->filled('status')) {
