@@ -121,6 +121,7 @@ function ShiftPage() {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line
     fetchData();
   }, [currentUser?.username, currentUser?.branch_id]);
 

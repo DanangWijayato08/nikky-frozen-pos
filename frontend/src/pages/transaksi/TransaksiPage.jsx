@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
   Download,
@@ -248,6 +248,7 @@ function TransaksiPage() {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line
     fetchTransactions();
   }, [selectedDate]);
 

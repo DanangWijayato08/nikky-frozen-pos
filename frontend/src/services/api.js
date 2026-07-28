@@ -6,18 +6,12 @@ const API_BASE_URL =
 
 async function handleResponse(response, defaultErrorMessage) {
 
-  let result = null;
-
-
+  let result;
 
   try {
-
     result = await response.json();
-
-  } catch (error) {
-
+  } catch {
     result = null;
-
   }
 
 
@@ -110,11 +104,12 @@ async function request(
 
     return handleResponse(response, defaultErrorMessage);
 
-  } catch (error) {
+  } catch (err) {
 
     throw new Error(
 
-      "Tidak bisa terhubung ke backend. Pastikan Laravel berjalan di http://127.0.0.1:8000"
+      "Tidak bisa terhubung ke backend. Pastikan Laravel berjalan di http://127.0.0.1:8000",
+      { cause: err }
 
     );
 
@@ -132,7 +127,7 @@ const apiCache = new Map();
 
 
 
-function clearCacheByPrefix(prefix) {
+export function clearCacheByPrefix(prefix) {
 
   Array.from(apiCache.keys()).forEach((key) => {
 
@@ -186,7 +181,7 @@ async function requestBlob(url, options = {}, defaultErrorMessage = "Terjadi kes
 
       let result = null;
 
-      try { result = await response.json(); } catch (e) { result = null; }
+      try { result = await response.json(); } catch { result = null; }
 
       throw new Error(result?.message || defaultErrorMessage);
 
@@ -208,11 +203,11 @@ async function requestBlob(url, options = {}, defaultErrorMessage = "Terjadi kes
 
     return { blob, filename };
 
-  } catch (error) {
+  } catch (err) {
 
-    if (error instanceof Error) throw error;
+    if (err instanceof Error) throw err;
 
-    throw new Error("Tidak bisa terhubung ke backend. Pastikan Laravel berjalan di http://127.0.0.1:8000");
+    throw new Error("Tidak bisa terhubung ke backend. Pastikan Laravel berjalan di http://127.0.0.1:8000", { cause: err });
 
   }
 
