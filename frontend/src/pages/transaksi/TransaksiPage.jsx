@@ -255,16 +255,15 @@ function TransaksiPage() {
   const filteredTransactions = useMemo(() => {
     return transactions.filter((transaction) => {
       const keyword = searchKeyword.toLowerCase();
-      const transactionDate = transaction.date?.slice(0, 10);
       const matchSearch =
         transaction.invoice.toLowerCase().includes(keyword) ||
         transaction.cashier.toLowerCase().includes(keyword) ||
         transaction.branch.toLowerCase().includes(keyword);
       const matchMethod =
         selectedMethod === "Semua Metode" || transaction.method === selectedMethod;
-      return matchSearch && transactionDate === selectedDate && matchMethod;
+      return matchSearch && matchMethod;
     });
-  }, [transactions, searchKeyword, selectedDate, selectedMethod]);
+  }, [transactions, searchKeyword, selectedMethod]);
 
   const summarySource = summary || {};
   const totalReceipts = summarySource.total_receipts ?? filteredTransactions.length;
